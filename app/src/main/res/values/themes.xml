@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.MealTracker" parent="Theme.AppCompat.Light.NoActionBar">
+        <item name="colorPrimary">@color/green</item>
+        <item name="colorPrimaryDark">@color/green_dark</item>
+        <item name="colorAccent">@color/green_light</item>
+        <item name="android:windowBackground">@color/warm_bg</item>
+        <item name="android:statusBarColor">@color/green</item>
+        <item name="android:navigationBarColor">@color/white</item>
+    </style>
+</resources>
