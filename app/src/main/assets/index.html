@@ -349,7 +349,13 @@ const LS = {
   set(k, v) { localStorage.setItem(k, JSON.stringify(v)); }
 };
 
-function dateKey(d) { return d ? (typeof d === 'string' ? d : d.toISOString().slice(0,10)) : new Date().toISOString().slice(0,10); }
+function dateKey(d) {
+  if (!d) d = new Date();
+  if (typeof d === 'string') return d;
+  // Use LOCAL date, not UTC — toISOString() returns UTC which shifts the date after 5pm MST
+  const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0'), day = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
 function today() { return new Date(); }
 function dayName(d) { return DAYS[(d || today()).getDay()]; }
 
