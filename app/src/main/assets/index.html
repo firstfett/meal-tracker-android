@@ -4,11 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <meta name="theme-color" content="#6b9e7b">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="default">
-<link rel="manifest" href="manifest.json">
+<!-- PWA meta tags kept for browser-based testing only -->
 <link rel="icon" href="icon-192.png">
-<link rel="apple-touch-icon" href="icon-192.png">
 <title>Meal Tracker</title>
 <style>
 :root {
@@ -453,12 +450,13 @@ function toggleWater(i) {
   renderDashboard();
 }
 
-function calcProgress(dd) {
-  const required = CHECKLIST_ITEMS.filter(i => !i.opt);
-  const reqDone = required.filter(i => dd.checks[i.id]).length;
-  const waterGoal = getWaterSchedule().glasses || 8;
+// Cache required items (static, never changes at runtime)
+const _requiredItems = CHECKLIST_ITEMS.filter(i => !i.opt);
+function calcProgress(dd, _waterGoal) {
+  const reqDone = _requiredItems.filter(i => dd.checks[i.id]).length;
+  const waterGoal = _waterGoal || getWaterSchedule().glasses || 8;
   const waterPct = Math.min(dd.water / waterGoal, 1);
-  return Math.round(((reqDone / required.length) * 0.7 + waterPct * 0.3) * 100);
+  return Math.round(((reqDone / _requiredItems.length) * 0.7 + waterPct * 0.3) * 100);
 }
 
 function updateProgress(dd) {
@@ -500,7 +498,7 @@ function openDayModal(dk, dn) {
   document.getElementById('modal-title').textContent = dn + ' — ' + dk;
   let html = '<div class="checklist">';
   CHECKLIST_ITEMS.forEach(item => {
-    html += `<div class="check-item ${dd.checks[item.id]?'checked':''}"><div class="check-box"></div><span class="check-label">${item.label}</span></div>`;
+    html += `<div class="check-item ${dd.checks[item.id]?'checked':''}"><div class="check-box"></div><span class="check-label">${esc(item.label)}</span></div>`;
   });
   html += '</div>';
   if (m) {
@@ -620,12 +618,13 @@ function renderHistory() {
   const d = new Date(); d.setHours(0,0,0,0);
   // Determine start: if today has progress, include it; otherwise start from yesterday
   const todayData = getDayData(dateKey(d));
-  const startOffset = calcProgress(todayData) >= 70 ? 0 : 1;
+  const _wg = getWaterSchedule().glasses || 8;
+  const startOffset = calcProgress(todayData, _wg) >= 70 ? 0 : 1;
   let countingCurrent = true;
   for (let i = startOffset; i < 365; i++) {
     const dt = new Date(d); dt.setDate(dt.getDate() - i);
     const dd = getDayData(dateKey(dt));
-    if (calcProgress(dd) >= 70) {
+    if (calcProgress(dd, _wg) >= 70) {
       streak++;
       if (streak > best) best = streak;
       if (countingCurrent) current = streak;
@@ -646,13 +645,14 @@ function renderCalendar() {
   document.getElementById('cal-month').textContent = new Date(y,m).toLocaleDateString('en-US',{month:'long',year:'numeric'});
   const grid = document.getElementById('cal-grid');
   const todayStr = dateKey();
+  const _calWg = getWaterSchedule().glasses || 8;
   let html = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d => `<div class="day-label">${d}</div>`).join('');
   const first = new Date(y,m,1).getDay();
   const days = new Date(y,m+1,0).getDate();
   for (let i = 0; i < first; i++) html += '<div></div>';
   for (let d = 1; d <= days; d++) {
     const dk = `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-    const dd = getDayData(dk), pct = calcProgress(dd);
+    const dd = getDayData(dk), pct = calcProgress(dd, _calWg);
     const cls = pct >= 70 ? 'green' : pct >= 30 ? 'yellow' : pct > 0 ? 'red' : '';
     const todayCls = dk === todayStr ? 'today' : '';
     html += `<div class="cal-cell ${cls} ${todayCls}">${d}</div>`;
@@ -683,11 +683,11 @@ function renderSettings() {
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <div style="flex:1;min-width:100px">
           <div style="font-size:11px;color:var(--text3);margin-bottom:2px">Start</div>
-          <input type="time" value="${ws.start}" onchange="updateWaterSchedule('start',this.value)" style="width:100%;padding:8px;border:1px solid var(--warm3);border-radius:8px;font-size:14px;background:var(--card);color:var(--text)">
+          <input type="time" value="${escAttr(ws.start)}" onchange="updateWaterSchedule('start',this.value)" style="width:100%;padding:8px;border:1px solid var(--warm3);border-radius:8px;font-size:14px;background:var(--card);color:var(--text)">
         </div>
         <div style="flex:1;min-width:100px">
           <div style="font-size:11px;color:var(--text3);margin-bottom:2px">End</div>
-          <input type="time" value="${ws.end}" onchange="updateWaterSchedule('end',this.value)" style="width:100%;padding:8px;border:1px solid var(--warm3);border-radius:8px;font-size:14px;background:var(--card);color:var(--text)">
+          <input type="time" value="${escAttr(ws.end)}" onchange="updateWaterSchedule('end',this.value)" style="width:100%;padding:8px;border:1px solid var(--warm3);border-radius:8px;font-size:14px;background:var(--card);color:var(--text)">
         </div>
         <div style="min-width:70px">
           <div style="font-size:11px;color:var(--text3);margin-bottom:2px">Glasses</div>
@@ -700,7 +700,7 @@ function renderSettings() {
 
   // Meal editor
   const meals = getMeals(), ed = document.getElementById('meal-editor');
-  ed.innerHTML = DAYS.filter(d=>d!=='Sunday'||true).map(dn => {
+  ed.innerHTML = DAYS.map(dn => {
     const m = meals[dn] || {type:'',meal:'',snack:''};
     return `<div class="editor-day"><h4>${dn}</h4>
       <div class="editor-field"><label>Type</label><input value="${escAttr(m.type)}" onchange="updateMeal('${dn}','type',this.value)"></div>
@@ -746,11 +746,14 @@ function getWaterTimes() {
   const ws = getWaterSchedule();
   const [sh, sm] = ws.start.split(':').map(Number);
   const [eh, em] = ws.end.split(':').map(Number);
-  const startMin = sh * 60 + sm, endMin = eh * 60 + em;
+  let startMin = sh * 60 + sm, endMin = eh * 60 + em;
+  // Handle overnight schedules (e.g. start 20:00, end 08:00)
+  if (endMin <= startMin) endMin += 24 * 60;
   const gap = (endMin - startMin) / Math.max(ws.glasses - 1, 1);
   const times = [];
   for (let i = 0; i < ws.glasses; i++) {
-    const m = Math.round(startMin + gap * i);
+    let m = Math.round(startMin + gap * i);
+    if (m >= 24 * 60) m -= 24 * 60; // wrap past midnight
     const h = Math.floor(m / 60), min = m % 60;
     times.push(`${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}`);
   }
