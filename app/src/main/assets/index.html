@@ -2,9 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#6b9e7b">
-<!-- PWA meta tags kept for browser-based testing only -->
 <link rel="icon" href="icon-192.png">
 <title>Meal Tracker</title>
 <style>
@@ -29,8 +28,8 @@
   --green:#7bb88d;--green-light:#4a7a5a;--green-dark:#a8d5b8;
 }
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);max-width:430px;margin:0 auto;min-height:100vh;-webkit-tap-highlight-color:transparent;overflow-x:hidden;}
-.view{display:none;padding:16px 16px 90px;animation:fadeIn .25s ease}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);max-width:430px;margin:0 auto;min-height:100vh;-webkit-tap-highlight-color:transparent;overflow-x:hidden;padding-top:env(safe-area-inset-top);}
+.view{display:none;padding:16px 16px calc(90px + env(safe-area-inset-bottom));animation:fadeIn .25s ease}
 .view.active{display:block}
 @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
 
@@ -273,10 +272,11 @@ nav button .icon{font-size:22px}
   <div class="card">
     <h3>Reminders</h3>
     <div id="reminder-status" style="font-size:12px;color:var(--text3);margin-bottom:10px;padding:8px;background:var(--warm);border-radius:8px;display:none"></div>
-    <div style="display:flex;gap:8px;margin-bottom:8px">
-      <button class="btn btn-outline btn-sm" style="flex:1" onclick="testNotification()">🔔 Test</button>
-      <button class="btn btn-outline btn-sm" style="flex:1" onclick="checkNotificationStatus()">📊 Status</button>
-      <button class="btn btn-outline btn-sm" style="flex:1" onclick="grantExactAlarm()">⏰ Exact Alarm</button>
+    <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
+      <button class="btn btn-outline btn-sm" style="flex:1;min-width:70px" onclick="testNotification()">🔔 Test</button>
+      <button class="btn btn-outline btn-sm" style="flex:1;min-width:70px" onclick="checkNotificationStatus()">📊 Status</button>
+      <button class="btn btn-outline btn-sm" style="flex:1;min-width:70px" onclick="grantExactAlarm()">⏰ Alarm</button>
+      <button class="btn btn-outline btn-sm" style="flex:1;min-width:70px" onclick="fixBattery()">🔋 Battery</button>
     </div>
     <div id="reminder-settings"></div>
   </div>
@@ -427,10 +427,14 @@ function renderDashboard() {
   ).join('');
   document.getElementById('water-count').textContent = `${dd.water} / ${waterGoal} glasses`;
 
-  // Notes
+  // Notes — debounce saves to avoid thrashing localStorage on every keystroke
   const notes = document.getElementById('daily-notes');
   notes.value = dd.notes || '';
-  notes.oninput = () => { const d2 = getDayData(dk); d2.notes = notes.value; setDayData(dk, d2); };
+  let _notesTimer;
+  notes.oninput = () => {
+    clearTimeout(_notesTimer);
+    _notesTimer = setTimeout(() => { const d2 = getDayData(dk); d2.notes = notes.value; setDayData(dk, d2); }, 300);
+  };
 
   // Progress
   updateProgress(dd);
@@ -573,7 +577,10 @@ function drawWeightChart(weights) {
     return;
   }
   const vals = weights.map(e => e.w);
-  const min = Math.min(...vals) - 2, max = Math.max(...vals) + 2;
+  // Avoid spread operator for large arrays (stack overflow risk on some WebViews)
+  let min = vals[0], max = vals[0];
+  for (let i = 1; i < vals.length; i++) { if (vals[i] < min) min = vals[i]; if (vals[i] > max) max = vals[i]; }
+  min -= 2; max += 2;
   const xStep = (W - pad*2) / (vals.length - 1);
   const toX = i => pad + i * xStep;
   const toY = v => pad + (1 - (v-min)/(max-min)) * (H - pad*2);
@@ -736,6 +743,11 @@ function toggleWaterSchedule() {
 
 function updateWaterSchedule(field, val) {
   const ws = getWaterSchedule();
+  if (field === 'glasses') {
+    val = parseInt(val);
+    if (isNaN(val) || val < 1) val = 1;
+    if (val > 16) val = 16;
+  }
   ws[field] = val;
   setWaterSchedule(ws);
   renderSettings();
@@ -809,13 +821,27 @@ function grantExactAlarm() {
   }
 }
 
+function fixBattery() {
+  if (typeof NativeReminders !== 'undefined' && NativeReminders.openBatterySettings) {
+    NativeReminders.openBatterySettings();
+  } else {
+    alert('Only available in the Android app');
+  }
+}
+
 function checkNotificationStatus() {
   const el = document.getElementById('reminder-status');
   if (typeof NativeReminders !== 'undefined') {
     const status = NativeReminders.getStatus();
     const all = buildAllReminders();
-    el.textContent = status + 'Active reminders to schedule: ' + all.filter(r=>r.on).length;
+    let extra = 'Active reminders: ' + all.filter(r=>r.on).length;
+    if (typeof NativeReminders.isBatteryOptimized === 'function') {
+      const optimized = NativeReminders.isBatteryOptimized();
+      extra += '\nBattery optimized: ' + (optimized ? '⚠️ YES (tap Battery to fix)' : '✅ No (good)');
+    }
+    el.textContent = status + extra;
     el.style.display = 'block';
+    el.style.whiteSpace = 'pre-line';
   } else {
     el.textContent = 'Running in browser — native notifications only work in the Android app';
     el.style.display = 'block';
@@ -841,13 +867,18 @@ function exportData() {
       const raw = localStorage.getItem(k);
       data[k] = JSON.parse(raw);
     } catch {
-      // Store raw string if not valid JSON
       data[k] = localStorage.getItem(k);
     }
   }
-  const blob = new Blob([JSON.stringify(data,null,2)], {type:'application/json'});
-  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-  a.download = 'meal-tracker-backup-' + dateKey() + '.json'; a.click();
+  const json = JSON.stringify(data, null, 2);
+  // Android WebView doesn't support blob: downloads — use data URI instead
+  const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(json);
+  const a = document.createElement('a');
+  a.href = dataUri;
+  a.download = 'meal-tracker-backup-' + dateKey() + '.json';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
 }
 
 function resetAll() {

@@ -95,6 +95,36 @@ public class ReminderBridge {
     }
 
     @JavascriptInterface
+    public void openBatterySettings() {
+        try {
+            // Samsung One UI: open battery optimization exclusion for this app
+            Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+            intent.setData(android.net.Uri.parse("package:" + context.getPackageName()));
+            intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            context.startActivity(intent);
+        } catch (Exception e) {
+            // Fallback: open general battery settings
+            try {
+                Intent fallback = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+                fallback.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                context.startActivity(fallback);
+            } catch (Exception e2) {
+                Log.e(TAG, "Cannot open battery settings", e2);
+            }
+        }
+    }
+
+    @JavascriptInterface
+    public boolean isBatteryOptimized() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            android.os.PowerManager pm = (android.os.PowerManager)
+                context.getSystemService(Context.POWER_SERVICE);
+            return pm != null && pm.isIgnoringBatteryOptimizations(context.getPackageName()) == false;
+        }
+        return false;
+    }
+
+    @JavascriptInterface
     public void setReminders(String json) {
         Log.d(TAG, "setReminders called with " + json.length() + " chars");
         try {
