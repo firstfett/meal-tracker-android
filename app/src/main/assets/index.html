@@ -276,9 +276,10 @@ nav button .icon{font-size:22px}
   <div class="card">
     <h3>Reminders</h3>
     <div id="reminder-status" style="font-size:12px;color:var(--text3);margin-bottom:10px;padding:8px;background:var(--warm);border-radius:8px;display:none"></div>
-    <div style="display:flex;gap:8px;margin-bottom:12px">
-      <button class="btn btn-outline btn-sm" style="flex:1" onclick="testNotification()">🔔 Test Notification</button>
-      <button class="btn btn-outline btn-sm" style="flex:1" onclick="checkNotificationStatus()">📊 Check Status</button>
+    <div style="display:flex;gap:8px;margin-bottom:8px">
+      <button class="btn btn-outline btn-sm" style="flex:1" onclick="testNotification()">🔔 Test</button>
+      <button class="btn btn-outline btn-sm" style="flex:1" onclick="checkNotificationStatus()">📊 Status</button>
+      <button class="btn btn-outline btn-sm" style="flex:1" onclick="grantExactAlarm()">⏰ Exact Alarm</button>
     </div>
     <div id="reminder-settings"></div>
   </div>
@@ -287,14 +288,6 @@ nav button .icon{font-size:22px}
     <h3>Edit Meal Plan</h3>
     <div id="meal-editor"></div>
     <button class="btn btn-outline btn-sm" style="margin-top:8px;width:100%" onclick="resetMealPlan()">Reset to Default</button>
-  </div>
-
-  <div class="card">
-    <h3>Calorie Goal</h3>
-    <div class="setting-row">
-      <label>Daily target (kcal)</label>
-      <input type="number" id="cal-goal" value="1200" onchange="saveSetting('calorieGoal',this.value)">
-    </div>
   </div>
 
   <div class="card">
@@ -390,9 +383,22 @@ function showView(id) {
   if (id === 'v-settings') renderSettings();
 }
 
+// ── HTML ESCAPING (XSS protection) ──
+function esc(str) {
+  if (!str) return '';
+  const el = document.createElement('span');
+  el.textContent = str;
+  return el.innerHTML;
+}
+function escAttr(str) {
+  if (!str) return '';
+  return str.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
 // ── DASHBOARD ──
 function renderDashboard() {
   const d = today(), dn = dayName(d), dk = dateKey(d), dd = getDayData(dk);
+  const waterGoal = getWaterSchedule().glasses || 8;
   document.getElementById('dash-day').textContent = dn;
   document.getElementById('dash-date').textContent = d.toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'});
 
@@ -402,27 +408,27 @@ function renderDashboard() {
     const checked = dd.checks[item.id] ? 'checked' : '';
     return `<div class="check-item ${checked}" onclick="toggleCheck('${item.id}')">
       <div class="check-box"></div>
-      <span class="check-label">${item.label}</span>
+      <span class="check-label">${esc(item.label)}</span>
       ${item.opt ? '<span class="check-opt">optional</span>' : ''}
     </div>`;
   }).join('');
 
-  // Meal display
+  // Meal display (escaped to prevent XSS — bug #8)
   const meals = getMeals(), m = meals[dn];
   const md = document.getElementById('meal-display');
   if (m) {
-    md.innerHTML = `<div class="meal-info"><div class="meal-type">🍽️ ${m.type}</div><div class="meal-desc">${m.meal}</div></div>
-    <div class="meal-info" style="margin-top:6px"><div class="meal-type">🥜 Snack</div><div class="meal-desc">${m.snack}</div></div>`;
+    md.innerHTML = `<div class="meal-info"><div class="meal-type">🍽️ ${esc(m.type)}</div><div class="meal-desc">${esc(m.meal)}</div></div>
+    <div class="meal-info" style="margin-top:6px"><div class="meal-type">🥜 Snack</div><div class="meal-desc">${esc(m.snack)}</div></div>`;
   } else {
     md.innerHTML = '<div class="meal-info"><div class="meal-desc">No meal plan for today</div></div>';
   }
 
-  // Water
+  // Water — uses configured glass count (bug #7)
   const wr = document.getElementById('water-row');
-  wr.innerHTML = Array.from({length:8}, (_,i) =>
+  wr.innerHTML = Array.from({length:waterGoal}, (_,i) =>
     `<div class="water-drop ${i < dd.water ? 'filled' : ''}" onclick="toggleWater(${i})"></div>`
   ).join('');
-  document.getElementById('water-count').textContent = `${dd.water} / 8 glasses`;
+  document.getElementById('water-count').textContent = `${dd.water} / ${waterGoal} glasses`;
 
   // Notes
   const notes = document.getElementById('daily-notes');
@@ -450,7 +456,8 @@ function toggleWater(i) {
 function calcProgress(dd) {
   const required = CHECKLIST_ITEMS.filter(i => !i.opt);
   const reqDone = required.filter(i => dd.checks[i.id]).length;
-  const waterPct = Math.min(dd.water / 8, 1);
+  const waterGoal = getWaterSchedule().glasses || 8;
+  const waterPct = Math.min(dd.water / waterGoal, 1);
   return Math.round(((reqDone / required.length) * 0.7 + waterPct * 0.3) * 100);
 }
 
@@ -467,18 +474,23 @@ function renderWeek() {
   const grid = document.getElementById('week-grid');
   const meals = getMeals();
   const d = today(), dow = d.getDay();
+  const todayDk = dateKey(d);
   grid.innerHTML = '';
   for (let i = 0; i < 7; i++) {
     const offset = i - dow;
     const dt = new Date(d); dt.setDate(dt.getDate() + offset);
     const dk = dateKey(dt), dd = getDayData(dk), dn = DAYS[i];
+    const isFuture = dk > todayDk;
+    const isToday = dk === todayDk;
     const pct = calcProgress(dd);
-    const cls = pct >= 70 ? 'high' : pct >= 30 ? 'mid' : 'low';
+    const cls = isFuture ? '' : (pct >= 70 ? 'high' : pct >= 30 ? 'mid' : 'low');
+    const pctText = isFuture ? '—' : pct + '%';
     const m = meals[dn];
-    grid.innerHTML += `<div class="week-day" onclick="openDayModal('${dk}','${dn}')">
+    const todayTag = isToday ? ' style="border-left:3px solid var(--green)"' : '';
+    grid.innerHTML += `<div class="week-day"${todayTag} onclick="openDayModal('${dk}','${dn}')">
       <div class="wd-name">${dn.slice(0,3)}</div>
-      <div class="wd-meal">${m ? m.meal : '—'}</div>
-      <div class="wd-pct ${cls}">${pct}%</div>
+      <div class="wd-meal">${m ? esc(m.meal) : '—'}</div>
+      <div class="wd-pct ${cls}">${pctText}</div>
     </div>`;
   }
 }
@@ -492,11 +504,12 @@ function openDayModal(dk, dn) {
   });
   html += '</div>';
   if (m) {
-    html += `<div class="meal-info" style="margin-top:12px"><div class="meal-type">🍽️ ${m.type}</div><div class="meal-desc">${m.meal}</div></div>`;
-    html += `<div class="meal-info" style="margin-top:6px"><div class="meal-type">🥜 Snack</div><div class="meal-desc">${m.snack}</div></div>`;
+    html += `<div class="meal-info" style="margin-top:12px"><div class="meal-type">🍽️ ${esc(m.type)}</div><div class="meal-desc">${esc(m.meal)}</div></div>`;
+    html += `<div class="meal-info" style="margin-top:6px"><div class="meal-type">🥜 Snack</div><div class="meal-desc">${esc(m.snack)}</div></div>`;
   }
-  html += `<p style="margin-top:12px;color:var(--text2)">💧 Water: ${dd.water}/8</p>`;
-  if (dd.notes) html += `<p style="margin-top:8px;color:var(--text2)">📝 ${dd.notes}</p>`;
+  const waterGoal = getWaterSchedule().glasses || 8;
+  html += `<p style="margin-top:12px;color:var(--text2)">💧 Water: ${dd.water}/${waterGoal}</p>`;
+  if (dd.notes) html += `<p style="margin-top:8px;color:var(--text2)">📝 ${esc(dd.notes)}</p>`;
   document.getElementById('modal-body').innerHTML = html;
   document.getElementById('day-modal').classList.add('open');
 }
@@ -529,7 +542,14 @@ function logWeight() {
   const inp = document.getElementById('weight-input'), val = parseFloat(inp.value);
   if (!val || val < 50 || val > 500) return;
   const weights = getWeights();
-  weights.push({ d: dateKey(), w: val });
+  const dk = dateKey();
+  // Upsert: replace existing entry for today instead of duplicating (bug #11)
+  const existing = weights.findIndex(e => e.d === dk);
+  if (existing >= 0) {
+    weights[existing].w = val;
+  } else {
+    weights.push({ d: dk, w: val });
+  }
   setWeights(weights);
   inp.value = '';
   renderWeight();
@@ -594,15 +614,25 @@ function drawWeightChart(weights) {
 // ── HISTORY / STREAKS ──
 let calMonth = new Date();
 function renderHistory() {
-  // Streaks
+  // Streaks — count backwards, skip today if not yet started (bug #4)
   const sr = document.getElementById('streak-row');
   let current = 0, best = 0, streak = 0;
   const d = new Date(); d.setHours(0,0,0,0);
-  for (let i = 0; i < 365; i++) {
+  // Determine start: if today has progress, include it; otherwise start from yesterday
+  const todayData = getDayData(dateKey(d));
+  const startOffset = calcProgress(todayData) >= 70 ? 0 : 1;
+  let countingCurrent = true;
+  for (let i = startOffset; i < 365; i++) {
     const dt = new Date(d); dt.setDate(dt.getDate() - i);
     const dd = getDayData(dateKey(dt));
-    if (calcProgress(dd) >= 70) { streak++; if (streak > best) best = streak; if (i === 0 || current === i) current = streak; }
-    else { streak = 0; }
+    if (calcProgress(dd) >= 70) {
+      streak++;
+      if (streak > best) best = streak;
+      if (countingCurrent) current = streak;
+    } else {
+      if (countingCurrent) countingCurrent = false;
+      streak = 0;
+    }
   }
   sr.innerHTML = `<div class="streak-box"><div class="val">🔥 ${current}</div><div class="lbl">Current Streak</div></div>
     <div class="streak-box"><div class="val">⭐ ${best}</div><div class="lbl">Best Streak</div></div>`;
@@ -637,8 +667,8 @@ function renderSettings() {
   const rs = document.getElementById('reminder-settings');
   rs.innerHTML = reminders.map((r,i) => `
     <div class="setting-row">
-      <label>${r.label}</label>
-      <input type="time" value="${r.time}" onchange="updateReminder(${i},'time',this.value)">
+      <label>${esc(r.label)}</label>
+      <input type="time" value="${escAttr(r.time)}" onchange="updateReminder(${i},'time',this.value)">
       <div class="toggle ${r.on?'on':''}" onclick="updateReminder(${i},'on')"></div>
     </div>`).join('');
 
@@ -673,13 +703,11 @@ function renderSettings() {
   ed.innerHTML = DAYS.filter(d=>d!=='Sunday'||true).map(dn => {
     const m = meals[dn] || {type:'',meal:'',snack:''};
     return `<div class="editor-day"><h4>${dn}</h4>
-      <div class="editor-field"><label>Type</label><input value="${m.type}" onchange="updateMeal('${dn}','type',this.value)"></div>
-      <div class="editor-field"><label>Meal</label><textarea onchange="updateMeal('${dn}','meal',this.value)">${m.meal}</textarea></div>
-      <div class="editor-field"><label>Snack</label><input value="${m.snack}" onchange="updateMeal('${dn}','snack',this.value)"></div>
+      <div class="editor-field"><label>Type</label><input value="${escAttr(m.type)}" onchange="updateMeal('${dn}','type',this.value)"></div>
+      <div class="editor-field"><label>Meal</label><textarea onchange="updateMeal('${dn}','meal',this.value)">${esc(m.meal)}</textarea></div>
+      <div class="editor-field"><label>Snack</label><input value="${escAttr(m.snack)}" onchange="updateMeal('${dn}','snack',this.value)"></div>
     </div>`;
   }).join('');
-
-  document.getElementById('cal-goal').value = getSetting('calorieGoal', 1200);
 
   // Update theme toggle buttons
   const mode = LS.get('theme', 'auto');
@@ -770,6 +798,14 @@ function testNotification() {
   }
 }
 
+function grantExactAlarm() {
+  if (typeof NativeReminders !== 'undefined' && NativeReminders.openAlarmSettings) {
+    NativeReminders.openAlarmSettings();
+  } else {
+    alert('Only available in the Android app (Android 12+)');
+  }
+}
+
 function checkNotificationStatus() {
   const el = document.getElementById('reminder-status');
   if (typeof NativeReminders !== 'undefined') {
@@ -798,7 +834,13 @@ function exportData() {
   const data = {};
   for (let i = 0; i < localStorage.length; i++) {
     const k = localStorage.key(i);
-    data[k] = LS.get(k.replace(/^"?(.*?)"?$/,'$1'), null);
+    try {
+      const raw = localStorage.getItem(k);
+      data[k] = JSON.parse(raw);
+    } catch {
+      // Store raw string if not valid JSON
+      data[k] = localStorage.getItem(k);
+    }
   }
   const blob = new Blob([JSON.stringify(data,null,2)], {type:'application/json'});
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
@@ -815,10 +857,7 @@ function resetAll() {
 // Push initial reminders to native on load
 pushRemindersToNative();
 
-// ── SERVICE WORKER ──
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('sw.js').catch(()=>{});
-}
+// Service worker removed — not needed in Android WebView wrapper
 
 // ── THEME ──
 function setTheme(mode) {

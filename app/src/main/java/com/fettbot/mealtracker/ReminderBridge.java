@@ -59,7 +59,11 @@ public class ReminderBridge {
         // Check exact alarm permission
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             AlarmManager am = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
-            sb.append("Exact alarms allowed: ").append(am != null && am.canScheduleExactAlarms()).append("\n");
+            boolean canExact = am != null && am.canScheduleExactAlarms();
+            sb.append("Exact alarms allowed: ").append(canExact).append("\n");
+            if (!canExact) {
+                sb.append("⚠️ Reminders may be delayed up to 10 min. Tap 'Grant Exact Alarm' in settings.\n");
+            }
         } else {
             sb.append("Exact alarms allowed: true (pre-S)\n");
         }
@@ -132,6 +136,8 @@ public class ReminderBridge {
                 Intent intent = new Intent(context, ReminderReceiver.class);
                 intent.putExtra("label", r.getString("label"));
                 intent.putExtra("id", i);
+                intent.putExtra("hour", hour);
+                intent.putExtra("minute", minute);
 
                 PendingIntent pi = PendingIntent.getBroadcast(context, i, intent,
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);

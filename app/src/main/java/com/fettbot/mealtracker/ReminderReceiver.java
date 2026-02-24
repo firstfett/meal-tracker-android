@@ -18,9 +18,11 @@ public class ReminderReceiver extends BroadcastReceiver {
     public void onReceive(Context context, Intent intent) {
         String label = intent.getStringExtra("label");
         int id = intent.getIntExtra("id", 0);
+        int hour = intent.getIntExtra("hour", -1);
+        int minute = intent.getIntExtra("minute", -1);
         if (label == null) label = "Meal Tracker Reminder";
 
-        Log.d(TAG, "Notification fired: " + label + " (id=" + id + ")");
+        Log.d(TAG, "Notification fired: " + label + " (id=" + id + ", hour=" + hour + ", min=" + minute + ")");
 
         String emoji = "\uD83D\uDD14"; // 🔔
         String lower = label.toLowerCase();
@@ -52,34 +54,44 @@ public class ReminderReceiver extends BroadcastReceiver {
             Log.d(TAG, "Notification posted for id=" + id);
         }
 
-        // Re-schedule for tomorrow (exact alarms are one-shot)
-        rescheduleForTomorrow(context, intent, id);
+        // Re-schedule for tomorrow using exact hour/minute (fixes drift bug)
+        if (hour >= 0 && minute >= 0) {
+            rescheduleForTomorrow(context, label, id, hour, minute);
+        } else {
+            Log.w(TAG, "No hour/minute extras — cannot reschedule id=" + id);
+        }
     }
 
-    private void rescheduleForTomorrow(Context context, Intent original, int id) {
+    private void rescheduleForTomorrow(Context context, String label, int id, int hour, int minute) {
         try {
             AlarmManager am = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
             if (am == null) return;
 
             Calendar cal = Calendar.getInstance();
             cal.add(Calendar.DAY_OF_YEAR, 1);
-            // Keep same hour/minute — the alarm just fired so current time is approx correct
+            cal.set(Calendar.HOUR_OF_DAY, hour);
+            cal.set(Calendar.MINUTE, minute);
             cal.set(Calendar.SECOND, 0);
             cal.set(Calendar.MILLISECOND, 0);
 
             Intent intent = new Intent(context, ReminderReceiver.class);
-            intent.putExtra("label", original.getStringExtra("label"));
+            intent.putExtra("label", label);
             intent.putExtra("id", id);
+            intent.putExtra("hour", hour);
+            intent.putExtra("minute", minute);
 
             PendingIntent pi = PendingIntent.getBroadcast(context, id, intent,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !am.canScheduleExactAlarms()) {
+                am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, cal.getTimeInMillis(), pi);
+                Log.w(TAG, "Rescheduled id=" + id + " with inexact alarm (no permission)");
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, cal.getTimeInMillis(), pi);
             } else {
                 am.setExact(AlarmManager.RTC_WAKEUP, cal.getTimeInMillis(), pi);
             }
-            Log.d(TAG, "Rescheduled id=" + id + " for tomorrow");
+            Log.d(TAG, "Rescheduled id=" + id + " for tomorrow at " + hour + ":" + minute);
         } catch (Exception e) {
             Log.e(TAG, "Error rescheduling", e);
         }
