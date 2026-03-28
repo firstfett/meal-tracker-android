@@ -1,0 +1,50 @@
+name: Auto-merge
+
+on:
+  pull_request:
+    types: [labeled, synchronize]
+  check_suite:
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'pull_request' &&
+      contains(github.event.pull_request.labels.*.name, 'automerge')
+    steps:
+      - name: Wait for checks
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            for (let i = 0; i < 20; i++) {
+              const { data: checks } = await github.rest.checks.listForRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: pr.head.sha,
+              });
+              const pending = checks.check_runs.filter(c => c.status !== 'completed');
+              if (pending.length === 0) {
+                const failed = checks.check_runs.filter(c => c.conclusion !== 'success' && c.conclusion !== 'skipped');
+                if (failed.length === 0) {
+                  core.info('All checks passed, merging...');
+                  await github.rest.pulls.merge({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    pull_number: pr.number,
+                    merge_method: 'squash',
+                  });
+                  return;
+                } else {
+                  core.setFailed('Some checks failed: ' + failed.map(f => f.name).join(', '));
+                  return;
+                }
+              }
+              await new Promise(r => setTimeout(r, 30000));
+            }
+            core.setFailed('Timed out waiting for checks');
